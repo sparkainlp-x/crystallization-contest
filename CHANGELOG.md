@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (2026-10-23)
+## 0.1.0 (2026-10-24)
 
 - First commit: the exploration exactly as received (`spec/`): scripts, CSVs, tables, the fixed-threshold run in `spec/v1_fixed/` and the earlier tie-break run.
 - Package `crystallization_contest`: event definition and ground-truth labels, five reward schemes, the reward sweep, the 3-membrane contest with shield, amplifier and stabilizer, and a command line (`sweep`, `contest`, `stress`, `fcost`, each with `--quick`). Standard library only; `normalize`, `inner`, `fidelity` and `noisy` are vendored from membrane-crystallization v0.1.0 (same author, AGPL-3.0-only).
