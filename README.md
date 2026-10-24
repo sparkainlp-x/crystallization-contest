@@ -158,7 +158,7 @@ The exploration as received (fixed-threshold run, scaled-threshold run, scripts 
 
 ## How to cite
 
-See [CITATION.cff](CITATION.cff).
+Cite the concept DOI [10.5281/zenodo.23619514](https://doi.org/10.5281/zenodo.23619514) for all versions, or the version DOI [10.5281/zenodo.23619515](https://doi.org/10.5281/zenodo.23619515) for v0.1.0. See also [CITATION.cff](CITATION.cff).
 
 ## License
 
