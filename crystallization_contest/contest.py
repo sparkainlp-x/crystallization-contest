@@ -22,7 +22,7 @@ import math
 import statistics
 
 from .events import (AGREE, CHECK, ETA, WINDOW, agreeing, energy_ratio, is_true_event,
-                     observe, oja_step, scaled_threshold, sigma_for)
+                     observe, scaled_threshold, sigma_for)
 from .helpers import fidelity, inner, make_rng, normalize, rvec
 from .stats import map_jobs, mean_std
 
