@@ -1,0 +1,3 @@
+width,w,cfg,seeds,true_events_mean,true_events_std,false_events_mean,false_events_std,precision_mean,precision_std,rate_var_mean,rate_var_std,max_gain_mean,max_gain_std,runaway_frac
+512,0.5,---,20,117.7,6.586,6.95,5.042,0.946,0.037,0.054,0.026,1.434,0.192,0.0
+512,0.5,SAZ,20,42.6,4.185,3.95,3.576,0.914,0.079,0.002,0.002,1.453,0.25,0.0
