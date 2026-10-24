@@ -1,0 +1,6 @@
+  64 w=0.00 SA- TP  17.65±10.16 FP  28.35±11.48 P 0.388 rateVar 0.025 maxG 21.49 runaway 0.35
+  64 w=0.00 SAZ TP  19.55± 7.48 FP  24.65± 8.11 P 0.444 rateVar 0.009 maxG 3.00 runaway 0.0
+  64 w=0.50 SA- TP  17.70± 8.81 FP  29.40±10.98 P 0.383 rateVar 0.019 maxG 10.44 runaway 0.2
+  64 w=0.50 SAZ TP  20.10± 7.20 FP  24.05± 8.83 P 0.462 rateVar 0.010 maxG 3.00 runaway 0.0
+  64 w=1.00 SA- TP  14.75± 9.12 FP  34.85±16.46 P 0.318 rateVar 0.031 maxG 15.46 runaway 0.35
+  64 w=1.00 SAZ TP  18.90± 7.06 FP  26.45± 7.46 P 0.417 rateVar 0.007 maxG 3.00 runaway 0.0

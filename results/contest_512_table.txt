@@ -1,0 +1,2 @@
+ 512 w=0.50 --- TP 117.70± 6.59 FP   6.95± 5.04 P 0.946 rateVar 0.054 maxG 1.43 runaway 0.0
+ 512 w=0.50 SAZ TP  42.60± 4.18 FP   3.95± 3.58 P 0.914 rateVar 0.002 maxG 1.45 runaway 0.0
