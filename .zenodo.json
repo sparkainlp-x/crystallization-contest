@@ -1,7 +1,7 @@
 {
   "title": "Crystallization Contest: reward schemes between agents and a 3-membrane contest (SYNTHETIC)",
   "version": "0.1.0",
-  "publication_date": "2026-10-23",
+  "publication_date": "2026-10-24",
   "upload_type": "software",
   "description": "<p>SYNTHETIC classical simulation, standard-library Python. Compares five reward schemes between agents (individual, team, difference, consensus, random) on a harness-defined crystallization event at widths 32 to 512, with every event labelled true or false against the generator's ground truth, and runs a contest of three coupled membranes with a shield, an amplifier and a stabilizer, including a stabilizer stress test and a false-event-cost variant. Negative results are reported: the amplifier has no measurable effect, the stabilizer lowers variance at a cost in precision, and charging false events did not raise precision. The contest at widths 256 and 512 covers only one synergy weight and a subset of configurations; parameters are hand-picked.</p>",
   "creators": [
