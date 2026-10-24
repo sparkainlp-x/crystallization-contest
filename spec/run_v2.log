@@ -1,0 +1,24 @@
++ python3 sweep.py 32,64,128,256,512 20
++ CF=---,S--,SA-,SAZ
++ WS=0,0.5,1
++ TAG=contest
++ python3 contest.py 32,64,128 20
++ INIT_G=3
++ GSIG=0.6
++ CF=SA-,SAZ
++ WS=0,0.5,1
++ TAG=stress
++ python3 contest.py 64 20
++ FCOST=2
++ CF=---,S--,SAZ
++ WS=0,0.5,1
++ TAG=fcost
++ python3 contest.py 64,128 20
++ CF=---,S--,SA-,SAZ
++ WS=0.5
++ TAG=contest256
++ python3 contest.py 256 20
++ CF=---,SAZ
++ WS=0.5
++ TAG=contest512
++ python3 contest.py 512 20
