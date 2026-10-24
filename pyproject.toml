@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crystallization-contest"
+version = "0.1.0"
+description = "SYNTHETIC classical simulation: reward schemes between agents and a 3-membrane contest with shield, amplifier and stabilizer (standard library only)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "AGPL-3.0-only"}
+authors = [{name = "Jean-François Brisson"}]
+dependencies = []
+
+[project.scripts]
+crystallization-contest = "crystallization_contest.__main__:main"
+
+[tool.setuptools]
+packages = ["crystallization_contest"]
