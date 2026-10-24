@@ -1,0 +1,57 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+title: "Crystallization Contest: reward schemes between agents and a 3-membrane contest (SYNTHETIC)"
+type: software
+authors:
+  - family-names: "Brisson"
+    given-names: "Jean-François"
+    orcid: "https://orcid.org/0009-0000-9778-5374"
+    affiliation: "Spark AI NLP, Fredericton, New Brunswick, Canada"
+version: 0.1.0
+date-released: "2026-10-23"
+license: AGPL-3.0-only
+repository-code: "https://github.com/sparkainlp-x/crystallization-contest"
+abstract: >-
+  SYNTHETIC classical simulation, standard-library Python. Compares five
+  reward schemes between agents (individual, team, difference, consensus,
+  random) on a harness-defined crystallization event at widths 32 to 512,
+  with every event labelled true or false against the generator's ground
+  truth, and runs a contest of three coupled membranes with a shield, an
+  amplifier and a stabilizer, including a stabilizer stress test and a
+  false-event-cost variant. Reports negative results: the amplifier has no
+  measurable effect, the stabilizer lowers variance at a cost in precision,
+  and charging false events did not raise precision.
+keywords:
+  - "reward-schemes"
+  - "multi-agent"
+  - "streaming-pca"
+  - "synthetic"
+  - "classical-simulation"
+  - "python"
+references:
+  - type: article
+    title: "Simplified neuron model as a principal component analyzer"
+    authors:
+      - family-names: "Oja"
+        given-names: "Erkki"
+    year: 1982
+    journal: "Journal of Mathematical Biology"
+    volume: 15
+    issue: "3"
+    start: 267
+    end: 273
+    doi: "10.1007/BF00275687"
+  - type: software
+    title: "membrane-crystallization v0.1.0"
+    authors:
+      - family-names: "Brisson"
+        given-names: "Jean-François"
+    year: 2026
+    doi: "10.5281/zenodo.23583050"
+  - type: software
+    title: "membrane-committee v0.2.0"
+    authors:
+      - family-names: "Brisson"
+        given-names: "Jean-François"
+    year: 2026
+    doi: "10.5281/zenodo.23583048"

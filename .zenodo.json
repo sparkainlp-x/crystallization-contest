@@ -1,0 +1,58 @@
+{
+  "title": "Crystallization Contest: reward schemes between agents and a 3-membrane contest (SYNTHETIC)",
+  "version": "0.1.0",
+  "publication_date": "2026-10-23",
+  "upload_type": "software",
+  "description": "<p>SYNTHETIC classical simulation, standard-library Python. Compares five reward schemes between agents (individual, team, difference, consensus, random) on a harness-defined crystallization event at widths 32 to 512, with every event labelled true or false against the generator's ground truth, and runs a contest of three coupled membranes with a shield, an amplifier and a stabilizer, including a stabilizer stress test and a false-event-cost variant. Negative results are reported: the amplifier has no measurable effect, the stabilizer lowers variance at a cost in precision, and charging false events did not raise precision. The contest at widths 256 and 512 covers only one synergy weight and a subset of configurations; parameters are hand-picked.</p>",
+  "creators": [
+    {
+      "name": "Brisson, Jean-François",
+      "orcid": "0009-0000-9778-5374",
+      "affiliation": "Spark AI NLP, Fredericton, New Brunswick, Canada"
+    }
+  ],
+  "license": "AGPL-3.0-only",
+  "access_right": "open",
+  "language": "eng",
+  "keywords": [
+    "reward schemes",
+    "multi-agent",
+    "streaming PCA",
+    "synthetic",
+    "classical simulation",
+    "Python"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.1007/BF00275687",
+      "relation": "references",
+      "scheme": "doi",
+      "resource_type": "publication-article"
+    },
+    {
+      "identifier": "10.5281/zenodo.23583050",
+      "relation": "isDerivedFrom",
+      "scheme": "doi",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "10.5281/zenodo.23583048",
+      "relation": "references",
+      "scheme": "doi",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "https://github.com/sparkainlp-x/crystallization-contest",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ],
+  "references": [
+    "Oja, E. (1982). Simplified neuron model as a principal component analyzer. Journal of Mathematical Biology, 15(3), 267-273. https://doi.org/10.1007/BF00275687"
+  ],
+  "communities": [
+    {
+      "identifier": "spark-ai-nlp"
+    }
+  ]
+}
