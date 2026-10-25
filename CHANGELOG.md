@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Documentation only: added a Lineage and credit section that acknowledges Mun Seok Lee for the package received under his name that membrane-crystallization began as, and states that he is not an author of this release and has not endorsed it.
+
 ## 0.1.0 (2026-10-24)
 
 - First commit: the exploration exactly as received (`spec/`): scripts, CSVs, tables, the fixed-threshold run in `spec/v1_fixed/` and the earlier tie-break run.

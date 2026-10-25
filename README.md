@@ -150,6 +150,10 @@ See [DESIGN.md](DESIGN.md) for the details and [CHANGELOG.md](CHANGELOG.md) for 
 
 The exploration as received (fixed-threshold run, scaled-threshold run, scripts and CSVs) is kept unchanged in [spec/](spec/); the package, tests and `results/` follow from it. The package reproduces stored rows exactly (tests compare a sweep row and a contest row with `results/`). The helper functions `normalize`, `inner`, `fidelity` and `noisy` are vendored from membrane-crystallization v0.1.0 (same author, AGPL-3.0-only) so the package stays standard-library only.
 
+## Lineage and credit
+
+The helper functions `normalize`, `inner`, `fidelity` and `noisy` come from membrane-crystallization v0.1.0, which began as a package received under Mun Seok Lee's name (its Provenance section lists what was kept and what changed). The event definition, ground-truth labels, reward schemes, contest and scoring here are this project's own. The authorship of the exploration kept in `spec/` is not recorded in its files, so none is stated here. Mun Seok Lee is acknowledged for that earlier package only: he is not an author of this release and has not reviewed or endorsed it.
+
 ## References
 
 - Oja, E. (1982). Simplified neuron model as a principal component analyzer. *Journal of Mathematical Biology* 15(3), 267-273. https://doi.org/10.1007/BF00275687
