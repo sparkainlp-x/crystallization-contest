@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 
 import pytest
@@ -26,3 +27,20 @@ def test_cli_rejects_bad_arguments():
         main(["sweep", "--seeds", "1"])
     with pytest.raises(SystemExit):
         main(["nonsense"])
+
+
+def test_cli_v2_emits_strict_machine_readable_example(capsys):
+    assert main(["v2"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "illustrative_not_optimal"
+    assert result["normalized_cooperative"]["score"] == pytest.approx(0.25)
+    assert result["target_utility"]["per_episode_utility"] == pytest.approx(0.46)
+
+
+def test_cli_development_benchmark_dry_run(tmp_path, capsys):
+    assert main(["dev-benchmark", "--out", str(tmp_path), "--seeds", "1",
+                 "--dry-run"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "planned"
+    assert os.path.exists(tmp_path / "manifest.json")
+    assert os.path.exists(tmp_path / "plan.json")
