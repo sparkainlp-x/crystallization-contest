@@ -9,7 +9,7 @@ import csv
 import os
 import sys
 
-from . import contest, sweep
+from . import contest, evaluation_v2, sweep
 from .contest import CFG_BY_TAG
 from .stats import write_rows
 
@@ -46,7 +46,7 @@ class RawSink:
 def build_parser():
     ap = argparse.ArgumentParser(prog="crystallization_contest",
                                  description="SYNTHETIC reward-scheme and contest simulations.")
-    ap.add_argument("experiment", choices=["sweep", "contest", "stress", "fcost"])
+    ap.add_argument("experiment", choices=["sweep", "contest", "stress", "fcost", "v2"])
     ap.add_argument("--quick", action="store_true", help="tiny smoke run")
     ap.add_argument("--widths", type=_ints, help="comma list, e.g. 32,64,128")
     ap.add_argument("--agents", type=_ints, help="sweep: comma list of N (default 3,5)")
@@ -61,6 +61,9 @@ def build_parser():
 def main(argv=None):
     ap = build_parser()
     a = ap.parse_args(argv)
+    if a.experiment == "v2":
+        print(evaluation_v2.strict_json_dumps(evaluation_v2.worked_example()))
+        return 0
     if a.jobs < 1:
         ap.error("--jobs must be >= 1")
     if a.seeds is not None and a.seeds < 2:

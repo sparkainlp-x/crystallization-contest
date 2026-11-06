@@ -49,6 +49,33 @@ def test_legacy_and_normalized_formula_breakdowns_and_ties():
     assert tied["parameters"]["rank_leaders"] == []
 
 
+def test_normalized_score_is_episode_scaled_but_legacy_joint_term_is_not():
+    small = dict(
+        episodes=4,
+        w=0.5,
+        joint_true=1,
+        true_counts=[2, 1, 1],
+        false_counts=[1, 1, 0],
+        agent=0,
+        fcost=0.5,
+    )
+    large = dict(
+        episodes=8,
+        w=0.5,
+        joint_true=2,
+        true_counts=[4, 2, 2],
+        false_counts=[2, 2, 0],
+        agent=0,
+        fcost=0.5,
+    )
+    assert normalized_cooperative_score(**small)["score"] == pytest.approx(
+        normalized_cooperative_score(**large)["score"]
+    )
+    assert legacy_cooperative_score(**large)["contributions"]["joint_true"] == 2 * (
+        legacy_cooperative_score(**small)["contributions"]["joint_true"]
+    )
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -61,6 +88,7 @@ def test_legacy_and_normalized_formula_breakdowns_and_ties():
         {"true_counts": [True, 1, 1]},
         {"false_counts": [0, -1, 0]},
         {"false_counts": [0, 5, 0]},
+        {"false_counts": [3, 0, 1]},
         {"true_counts": [1, 1]},
         {"agent": 3},
         {"fcost": float("inf")},
@@ -174,11 +202,15 @@ def _paired_fixture(incumbent, candidate, initial_state=None, objective=None):
     )
     starts = []
     stream_values = []
+    stimuli_seen = []
 
     def runner(team, stimulus, state, rng_for):
+        assert not hasattr(rng_for.__self__, "_targets")
+        assert not hasattr(rng_for.__self__, "stimuli")
+        episode = 0 if stimulus[0][1] == (1, 2) else 1
+        stimuli_seen.append((team["name"], episode, stimulus))
         starts.append((team["name"], state["warm"], state["rate_ema"],
                        tuple(state["self_confirmation"])))
-        episode = 0 if stimulus[0][1] == (1, 2) else 1
         # Candidate consumes extra random values; indexed streams keep all later
         # environment draws fixed for the same exogenous indices.
         first = rng_for(episode, step=4, agent=1).random()
@@ -190,7 +222,7 @@ def _paired_fixture(incumbent, candidate, initial_state=None, objective=None):
         state["warm"] = team["name"]
         state["rate_ema"] += 0.1
         state["self_confirmation"].append(team["name"])
-        direction = team["direction"] if episode == 0 else None
+        direction = team["direction"] if episode == 0 else team.get("noise_direction")
         raw = (direction,) if direction else ()
         return EpisodeResult(direction, raw, operation_count=10), state
 
@@ -216,18 +248,21 @@ def _paired_fixture(incumbent, candidate, initial_state=None, objective=None):
         candidate_proposal_operations=12,
         common_validation_operations=4,
     )
-    return bank, result, starts, stream_values
+    return bank, result, starts, stream_values, stimuli_seen
 
 
 def test_paired_evaluation_is_isolated_and_accepts_only_evaluated_full_team():
-    incumbent = {"name": "incumbent", "direction": None, "member_a": 1, "member_b": 2}
-    candidate = {"name": "candidate", "direction": "target", "member_a": 8, "member_b": 9}
+    incumbent = {"name": "incumbent", "direction": "wrong", "member_a": 1, "member_b": 2}
+    candidate = {
+        "name": "candidate", "direction": "target", "noise_direction": "noise",
+        "member_a": 8, "member_b": 9,
+    }
     initial = {
         "warm": "initial",
         "rate_ema": 0.5,
         "self_confirmation": ["initial"],
     }
-    bank, result, starts, streams = _paired_fixture(incumbent, candidate, initial)
+    bank, result, starts, streams, stimuli = _paired_fixture(incumbent, candidate, initial)
     assert result.accepted
     assert result.accepted_team == candidate
     assert (result.accepted_team["member_a"], result.accepted_team["member_b"]) == (8, 9)
@@ -242,6 +277,9 @@ def test_paired_evaluation_is_isolated_and_accepts_only_evaluated_full_team():
     assert not hasattr(bank, "targets")
     assert result.incumbent["FN"] == 1
     assert result.candidate["TP"] == 1
+    assert result.incumbent["incorrect_direction_declarations"] == 1
+    assert result.candidate["FP"] == 1
+    assert result.candidate["raw_false_declarations"] == 1
     assert result.challenge_sha256 == bank.sha256
     assert result.candidate_proposal_attempts == 3
     assert result.report()["costs"]["candidate_proposal_operations"] == 12
@@ -251,16 +289,79 @@ def test_paired_evaluation_is_isolated_and_accepts_only_evaluated_full_team():
         by_episode.setdefault(episode, {})[arm] = (first, later)
     for arm_values in by_episode.values():
         assert arm_values["incumbent"] == arm_values["candidate"]
+    stimuli_by_episode = {}
+    for arm, episode, stimulus in stimuli:
+        stimuli_by_episode.setdefault(episode, {})[arm] = stimulus
+    for arm_values in stimuli_by_episode.values():
+        assert arm_values["incumbent"] == arm_values["candidate"]
 
 
 def test_paired_ties_keep_incumbent_and_nonfinite_objectives_reject():
     incumbent = {"name": "incumbent", "direction": None}
     candidate = {"name": "candidate", "direction": None}
-    _, tied, _, _ = _paired_fixture(incumbent, candidate)
+    initial = {"warm": "rollback", "rate_ema": 0.25, "self_confirmation": []}
+    _, tied, _, _, _ = _paired_fixture(incumbent, candidate, initial)
     assert not tied.accepted
     assert tied.accepted_team == incumbent
+    assert initial == {"warm": "rollback", "rate_ema": 0.25, "self_confirmation": []}
     with pytest.raises(ValueError, match="finite scalar"):
         _paired_fixture(incumbent, candidate, objective=lambda results, labels: math.nan)
+    with pytest.raises(ValueError, match="finite scalar"):
+        _paired_fixture(incumbent, candidate, objective=lambda results, labels: 10 ** 10000)
+
+
+def test_held_out_labels_are_scored_only_after_both_teams_finish():
+    bank = ChallengeBank(23, "held-out", ["stimulus"], ("secret-target",))
+    actions = []
+
+    def runner(team, stimulus, state, rng_for):
+        actions.append(("run", team))
+        return EpisodeResult(None, (), 1), state
+
+    def objective(results, labels):
+        assert actions[:2] == [("run", "incumbent"), ("run", "candidate")]
+        actions.append(("score", labels))
+        return 0
+
+    paired_team_evaluation(
+        "incumbent",
+        "candidate",
+        bank,
+        runner,
+        objective,
+        {},
+        objective_name="fixed",
+        candidate_proposal_attempts=1,
+    )
+    assert actions[-2:] == [("score", ("secret-target",)), ("score", ("secret-target",))]
+
+
+def test_accepted_snapshot_cannot_be_changed_during_scoring():
+    incumbent = {"id": "incumbent"}
+    candidate = {"id": "evaluated-candidate"}
+    bank = ChallengeBank(29, "calibration", ["stimulus"], (None,))
+
+    def runner(team, stimulus, state, rng_for):
+        return EpisodeResult(None, (), 1), state
+
+    scores = iter((0, 1))
+
+    def objective(results, labels):
+        candidate["id"] = "mutated-after-evaluation"
+        return next(scores)
+
+    result = paired_team_evaluation(
+        incumbent,
+        candidate,
+        bank,
+        runner,
+        objective,
+        {},
+        objective_name="fixed",
+        candidate_proposal_attempts=1,
+    )
+    assert result.accepted
+    assert result.accepted_team == {"id": "evaluated-candidate"}
 
 
 def test_bank_manifest_hash_and_indexed_streams_are_replayable():
@@ -279,6 +380,19 @@ def test_bank_manifest_hash_and_indexed_streams_are_replayable():
         protocol_manifest(bank, {"config": "x" * 5000})
 
 
+def test_paired_replay_is_deterministic_except_for_reported_timing():
+    incumbent = {"name": "incumbent", "direction": None}
+    candidate = {"name": "candidate", "direction": "target"}
+    _, first, _, _, _ = _paired_fixture(incumbent, candidate)
+    _, second, _, _, _ = _paired_fixture(incumbent, candidate)
+    assert first.accepted == second.accepted
+    assert first.incumbent_score == second.incumbent_score
+    assert first.candidate_score == second.candidate_score
+    assert first.incumbent == second.incumbent
+    assert first.candidate == second.candidate
+    assert first.challenge_sha256 == second.challenge_sha256
+
+
 def test_worked_example_is_machine_readable_and_matches_documented_values():
     example = worked_example()
     assert example["status"] == "illustrative_not_optimal"
@@ -288,7 +402,7 @@ def test_worked_example_is_machine_readable_and_matches_documented_values():
 
 
 def test_utility_costs_include_attempts_and_operations_without_merging_timing():
-    _, paired, _, _ = _paired_fixture(
+    _, paired, _, _, _ = _paired_fixture(
         {"name": "incumbent", "direction": None},
         {"name": "candidate", "direction": "target"},
     )

@@ -22,8 +22,9 @@ python -m crystallization_contest sweep --quick          # smoke run, under a se
 python -m crystallization_contest contest --quick
 python -m crystallization_contest stress --quick
 python -m crystallization_contest fcost --quick
+python -m crystallization_contest v2                     # opt-in scoring example (JSON)
 python -m crystallization_contest sweep --widths 32,64 --agents 3,5 --seeds 5 --jobs 4 --out out/
-pip install -r requirements-dev.txt && python -W error -m pytest   # 29 tests
+pip install -r requirements-dev.txt && python -W error -m pytest   # legacy + bounded v2 tests
 bash scripts/reproduce_full.sh                           # the full 20-seed runs; hours on 8 cores
 ```
 
@@ -133,6 +134,41 @@ Does charging membranes for false events raise precision? Widths 64 and 128, 20 
 | 128 | 1 | SAZ | 0.927 | 0.927 | 3.45 | 3.45 |
 
 No. Precision changes by at most 0.017 in either direction and is unchanged to three decimals in 10 of 18 cells. The selection score uses each membrane's own raw events, false events are already rare, and the shield and amplifier act only on the output stage, so the cost rarely changes which mutation is kept. A higher cost, or a regime with more false events, was not tried.
+
+## Opt-in v2 scoring and paired-evaluation core
+
+The existing commands and seeded scaled-threshold contest are still the historical protocol; this v2 label denotes the new scoring/evaluation core, not a replacement threshold algorithm. It is separate and is not substituted into `contest.run`. Run `python -m crystallization_contest v2` for a strict-JSON worked example, or use `crystallization_contest.evaluation_v2` directly. The example coefficients are illustrative, not calibrated or optimal. The existing CI runs these bounded unit tests together with the legacy regression tests; no large sweep is part of CI.
+
+### Audit of the historical reward and state transitions
+
+The legacy per-generation, per-membrane score is exactly `w * J + (1-w) * B_i - fcost * F_i / E`: `J` is the count of episodes where all three membranes are true; `B_i` is a unit bonus split across membranes tied for the largest positive individual true count, and is zero if all true counts are zero; `F_i` counts that membrane's raw incorrect declarations and `E` is the episode count. Thus at `w=0.5`, the joint term is still measured in episodes while the rank bonus is at most one; the weights are not equal numerical weighting. The configured false-event penalty has no fixed upper bound as `fcost` increases. The new normalized score instead uses `J/E`, bounded base components `J/E` and `B_i` in `[0,1]`, and the same configured penalty `fcost*(F_i/E)`, which is not bounded by one and does not guarantee superiority.
+
+The contest scores and selects mutations using ground-truth `tp`/`fp` counts. A generation mutates all three membranes together, but compares each membrane's score separately against its historical `best[i]` and accepts that membrane independently. The stored best can come from another generation's episodes, and independently accepted parameters can form a team that was never evaluated. In-episode peer confirmation updates `sp` without ground truth; `sp` affects later thresholds. The shield affects emitted outputs, not the raw per-membrane declarations used in the score: unshielded outputs can count up to three events per episode, shielded outputs at most one. `warm` (the last output vector) and the stabilizer's `rate_ema` are global mutable state updated while evaluating each generation, including generations whose parameter proposals are rejected. There is no transaction/rollback of that state in the historical protocol.
+
+Experiment 1's `rewards.reward` implementations use declaration presence, consensus, or the system-event rule and do not receive labels. `sweep.one` uses generator ground truth to label system outcomes for reporting, not as an argument to those reward functions.
+
+### v2 formulas, data, and limitations
+
+For `normalized_cooperative_score`, each returned breakdown includes signed contributions, source counts, and denominators:
+
+```text
+S_i = w*(J/E) + (1-w)*B_i - fcost*(F_i/E)
+```
+
+For the separately reported target-detection utility:
+
+```text
+U = b_tp*TP - c_fp*FP - c_fn*FN - c_compute*C - c_attempt*A
+per_episode_utility = U / E
+```
+
+TP/FP/FN/TN are episode-level detection of the target direction: a wrong-direction output on a target-present episode is an FN and is reported separately as an incorrect-direction declaration; a declaration on a target-absent episode is an FP. Raw declaration, raw true/false declaration, and incorrect-direction counts are separate from that confusion matrix. No extra direction penalty is currently implemented. Coefficients and their units are explicit inputs. `C` is a deterministic operation count and `A` is the number of proposal attempts, including failed attempts supplied by the caller; avoid pricing the same work in both terms. Wall/CPU seconds are reported separately. Common experimental validation overhead is recorded separately from candidate proposal and evaluation work.
+
+Scores and rates depend on target prevalence; comparisons need a declared, matched prevalence and seed partition. This implementation has not run seed-paired v2 comparisons or uncertainty summaries, and it makes no held-out performance claim.
+
+`ChallengeBank` requires materialized immutable stimuli and target-direction labels, hashes the bank, and identifies development, calibration, or held-out partitions. Paired evaluation passes only stimuli and label-free indexed random streams to the episode runner, starts incumbent and candidate from separate copies of the same state (including any caller-provided warm vector, rate EMA, and self-confirmation values), and discards evaluation-derived state afterward. It applies one predeclared finite scalar objective to each complete team and accepts the candidate team atomically only when its score is strictly greater; ties keep the incumbent. The caller must freeze configuration before held-out evaluation, prevent labels from reaching proposal/calibration/update code, and initialize each subsequent trial under a declared reset policy. The manifest records a challenge hash and marks evidence `exploratory_unregistered`; it does not establish preregistration.
+
+Migration starts by leaving `sweep`, `contest`, archived `results/`, and `spec/` untouched. For opt-in work, construct a bank and frozen configuration, implement a local runner returning `EpisodeResult` plus isolated state, choose the scalar objective before comparing teams, and use only `accepted_team` after the paired result. `python -m crystallization_contest v2` emits the illustrative scoring breakdown as JSON. This core does not yet implement training/calibration orchestration, held-out enforcement outside the runner boundary, proposal search, bounded seed-paired uncertainty comparisons, no-intervention/random/independent/shared-proposal comparisons, full-linked-system injection, or split clamp-only/damping-only ablations. No new scientific comparison or performance improvement is claimed.
 
 ## Limits
 

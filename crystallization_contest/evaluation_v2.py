@@ -29,7 +29,10 @@ def _integer(name, value, minimum=0):
 def _finite_nonnegative(name, value):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a finite nonnegative number")
-    value = float(value)
+    try:
+        value = float(value)
+    except OverflowError as exc:
+        raise ValueError(f"{name} must be a finite nonnegative number") from exc
     if not math.isfinite(value) or value < 0:
         raise ValueError(f"{name} must be a finite nonnegative number")
     return value
@@ -38,7 +41,10 @@ def _finite_nonnegative(name, value):
 def _weight(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("w must be finite and in [0, 1]")
-    value = float(value)
+    try:
+        value = float(value)
+    except OverflowError as exc:
+        raise ValueError("w must be finite and in [0, 1]") from exc
     if not math.isfinite(value) or not 0 <= value <= 1:
         raise ValueError("w must be finite and in [0, 1]")
     return value
@@ -49,8 +55,11 @@ def _score_inputs(episodes, w, joint_true, true_counts, false_counts, agent, fco
     w = _weight(w)
     joint_true = _integer("joint_true", joint_true)
     fcost = _finite_nonnegative("fcost", fcost)
-    true_counts = tuple(true_counts)
-    false_counts = tuple(false_counts)
+    try:
+        true_counts = tuple(true_counts)
+        false_counts = tuple(false_counts)
+    except TypeError as exc:
+        raise ValueError("true_counts and false_counts must be count vectors") from exc
     if not true_counts or len(true_counts) != len(false_counts):
         raise ValueError("true_counts and false_counts must have equal, positive length")
     agent = _integer("agent", agent)
@@ -76,11 +85,14 @@ def _cooperative_breakdown(version, episodes, w, joint_true, true_counts,
     max_true = max(true_counts)
     leaders = tuple(i for i, count in enumerate(true_counts) if count == max_true)
     rank_share = 1.0 / len(leaders) if max_true > 0 and agent in leaders else 0.0
-    joint_value = joint_true / episodes if normalized else joint_true
-    joint_contribution = w * joint_value
-    rank_contribution = (1.0 - w) * rank_share
-    penalty = -fcost * false_counts[agent] / episodes
-    score = joint_contribution + rank_contribution + penalty
+    try:
+        joint_value = joint_true / episodes if normalized else joint_true
+        joint_contribution = w * joint_value
+        rank_contribution = (1.0 - w) * rank_share
+        penalty = -fcost * false_counts[agent] / episodes
+        score = joint_contribution + rank_contribution + penalty
+    except OverflowError as exc:
+        raise ValueError("score is not finite") from exc
     if not math.isfinite(score):
         raise ValueError("score is not finite")
     return {
@@ -191,14 +203,17 @@ def utility_score(episodes, *, tp, fp, fn, tn, b_tp, c_fp, c_fn,
         if value is not None:
             _finite_nonnegative(name, value)
 
-    components = {
-        "true_positive_reward": coefficients["b_tp"] * counts["TP"],
-        "false_positive_penalty": -coefficients["c_fp"] * counts["FP"],
-        "false_negative_penalty": -coefficients["c_fn"] * counts["FN"],
-        "compute_penalty": -coefficients["c_compute"] * compute_operations,
-        "attempt_penalty": -coefficients["c_attempt"] * proposal_attempts,
-    }
-    total = sum(components.values())
+    try:
+        components = {
+            "true_positive_reward": coefficients["b_tp"] * counts["TP"],
+            "false_positive_penalty": -coefficients["c_fp"] * counts["FP"],
+            "false_negative_penalty": -coefficients["c_fn"] * counts["FN"],
+            "compute_penalty": -coefficients["c_compute"] * compute_operations,
+            "attempt_penalty": -coefficients["c_attempt"] * proposal_attempts,
+        }
+        total = sum(components.values())
+    except OverflowError as exc:
+        raise ValueError("utility is not finite") from exc
     if not math.isfinite(total):
         raise ValueError("utility is not finite")
     return {
@@ -264,6 +279,33 @@ def _freeze(value):
 
 
 @dataclass(frozen=True)
+class IndexedStreams:
+    """Indexed random channels without any reference to challenge stimuli/labels."""
+    seed: int
+    partition: str
+
+    episodes: int
+
+    def __post_init__(self):
+        _integer("seed", self.seed)
+        if self.partition not in PARTITIONS:
+            raise ValueError(f"partition must be one of {PARTITIONS}")
+        _integer("episodes", self.episodes, 1)
+
+    def rng_for(self, episode, *, step=0, agent=0, channel="environment"):
+        """Return a deterministic RNG isolated to one exogenous index/channel."""
+        episode = _integer("episode", episode)
+        step = _integer("step", step)
+        agent = _integer("agent", agent)
+        if episode >= self.episodes or not isinstance(channel, str) or not channel:
+            raise ValueError("invalid indexed random-stream key")
+        key = strict_json_dumps(
+            [self.seed, self.partition, episode, step, agent, channel]
+        ).encode("utf-8")
+        return random.Random(int.from_bytes(hashlib.sha256(key).digest(), "big"))
+
+
+@dataclass(frozen=True)
 class ChallengeBank:
     """Immutable exogenous stimuli plus labels hidden from the episode runner."""
 
@@ -300,17 +342,15 @@ class ChallengeBank:
     def episodes(self):
         return len(self.stimuli)
 
+    @property
+    def indexed_streams(self):
+        return IndexedStreams(self.seed, self.partition, self.episodes)
+
     def rng_for(self, episode, *, step=0, agent=0, channel="environment"):
         """Return a deterministic RNG isolated to one exogenous index/channel."""
-        episode = _integer("episode", episode)
-        step = _integer("step", step)
-        agent = _integer("agent", agent)
-        if episode >= self.episodes or not isinstance(channel, str) or not channel:
-            raise ValueError("invalid indexed random-stream key")
-        key = strict_json_dumps(
-            [self.seed, self.partition, episode, step, agent, channel]
-        ).encode("utf-8")
-        return random.Random(int.from_bytes(hashlib.sha256(key).digest(), "big"))
+        return self.indexed_streams.rng_for(
+            episode, step=step, agent=agent, channel=channel
+        )
 
 
 def protocol_manifest(bank, frozen_config):
@@ -467,29 +507,40 @@ def paired_team_evaluation(incumbent_team, candidate_team, bank, runner, objecti
         results = []
         for index, stimulus in enumerate(bank.stimuli):
             result, next_state = runner(
-                deepcopy(team), stimulus, deepcopy(state), bank.rng_for
+                deepcopy(team), stimulus, deepcopy(state),
+                bank.indexed_streams.rng_for,
             )
             if not isinstance(result, EpisodeResult):
                 raise TypeError("runner must return an EpisodeResult for each episode")
             results.append(result)
             state = deepcopy(next_state)
         counts = _arm_summary(results, bank._targets)
-        score = objective(tuple(results), bank._targets)
-        if isinstance(score, bool) or not isinstance(score, (int, float)):
-            raise ValueError("objective must return a finite scalar")
-        score = float(score)
-        if not math.isfinite(score):
-            raise ValueError("objective must return a finite scalar")
-        return counts, score
+        return counts, tuple(results)
 
+    def score(results):
+        value = objective(results, bank._targets)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("objective must return a finite scalar")
+        try:
+            value = float(value)
+        except OverflowError as exc:
+            raise ValueError("objective must return a finite scalar") from exc
+        if not math.isfinite(value):
+            raise ValueError("objective must return a finite scalar")
+        return value
+
+    incumbent_snapshot = deepcopy(incumbent_team)
+    candidate_snapshot = deepcopy(candidate_team)
     wall_start, cpu_start = time.perf_counter(), time.process_time()
-    incumbent_counts, incumbent_score = evaluate(incumbent_team)
-    candidate_counts, candidate_score = evaluate(candidate_team)
+    incumbent_counts, incumbent_results = evaluate(incumbent_snapshot)
+    candidate_counts, candidate_results = evaluate(candidate_snapshot)
+    incumbent_score = score(incumbent_results)
+    candidate_score = score(candidate_results)
     wall_seconds = time.perf_counter() - wall_start
     cpu_seconds = time.process_time() - cpu_start
     accepted = candidate_score > incumbent_score
     return PairedEvaluation(
-        accepted_team=deepcopy(candidate_team if accepted else incumbent_team),
+        accepted_team=deepcopy(candidate_snapshot if accepted else incumbent_snapshot),
         accepted=accepted,
         objective_name=objective_name,
         incumbent_score=incumbent_score,

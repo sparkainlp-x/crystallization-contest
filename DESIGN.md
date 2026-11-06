@@ -46,6 +46,97 @@ Design consequences worth knowing:
 - Without the shield, up to 3 events per episode are counted (one per membrane); with it at most 1. Totals are not comparable between those rows; precision and rates are.
 - The stabilizer has two parts, the leaky-integrator damping and the hard clamp. They are not ablated separately, and under stress the clamp most likely does most of the work.
 
+## Legacy protocol audit and v2 migration
+
+The package's default `contest.run` is the historical seeded experiment. The
+fixed-threshold code and its artifacts in `spec/v1_fixed/` are a separate older
+archive. Do not silently substitute the scoring/evaluation core in
+`crystallization_contest.evaluation_v2`; it is opt-in and does not change legacy
+results.
+
+The exact historical selection score for membrane `i` is
+`w * joint_true + (1-w) * rank_bonus_i - fcost * raw_false_i / episodes`.
+`joint_true` is an integer episode count (not divided by `episodes`);
+`rank_bonus_i` splits one unit among positive true-event leaders, while an
+all-zero true-event generation gives no rank bonus to anyone. `raw_false_i` is
+the membrane's incorrect-declaration count before shielding. The `joint_true`
+term can be as large as the episode count, but the rank bonus is at most one,
+so `w=0.5` does not mean equal numerical weighting. The configured false-event
+penalty has no fixed bound. This differs from
+`normalized_cooperative_score`, which uses bounded `joint_true/episodes` and
+bounded `B_i` base components but retains the unbounded configured
+`fcost*(F_i/episodes)` penalty; no superiority or `[0,1]` score guarantee is
+claimed.
+
+The contest's generation-wide mutation proposes a changed parameter set for
+all three membranes, then calculates true and false counts from the synthetic
+ground truth and accepts each membrane independently. Acceptance compares with
+`best[i]` accumulated from previous generations, not the current incumbent
+scored on this generation's exact episodes. The stored memories can therefore
+refer to different episode sets, and independent acceptance can assemble a
+hybrid team that was never scored as a team. The `sp` EMA is updated when a
+membrane declares based on peer agreement and does not itself consult ground
+truth, but the true/false counts used for selection do. The shield filters
+outputs after the declarations and cannot change the raw counts used for
+selection; without it up to three declarations are counted per episode, and
+with it at most one output is counted. `warm` and `rate_ema` are global state
+and advance during candidate evaluation even when that candidate's parameter
+is rejected. The historical protocol does not restore them on rejection.
+
+Experiment 1's `rewards.reward` functions consume declaration presence,
+consensus, or the system-event rule; they receive no ground-truth labels.
+`sweep.one` uses ground truth to label measured system outcomes, not as input to
+those reward functions.
+
+The v2 core instead compares complete teams on one immutable, pre-materialized
+challenge bank. Each episode's observation stimuli are provided as immutable
+values; indexed random streams are keyed by seed partition, episode, step,
+agent, and channel, so extra random calls in a branch cannot shift another
+indexed stream. The runner receives a stimulus and a stream accessor with no
+bank labels. Incumbent and candidate each receive independent copies of the
+same initial state, including caller-managed warm vectors, rate EMAs, and
+self-confirmation state. Their evaluation state is discarded after scoring.
+One finite scalar objective is declared before the comparison; a strict win
+accepts the whole evaluated candidate team, while a tie keeps the incumbent.
+Do not use independently accepted membrane parameters as a hybrid team.
+Initialize the next trial from the caller's documented reset policy rather than
+carrying evaluation-derived state implicitly.
+
+The v2 normalized score is `S_i = w*(J/E) + (1-w)*B_i - fcost*(F_i/E)`.
+The separate target-detection utility is
+`U = b_tp*TP - c_fp*FP - c_fn*FN - c_compute*C - c_attempt*A`, reported as
+`U/E` per episode. Its TP/FP/FN/TN are episode-level target-direction
+detections; a wrong direction when a target is present is an FN and is reported
+separately, not mixed into classification or localization. Raw declarations
+remain separate. All utility coefficients are explicit and require units;
+examples are illustrative, not optimal. The operation count must include all
+search and evaluation work, and the attempt count must include failed
+proposals. Avoid charging the same work in both terms. Timing is recorded in
+wall/CPU seconds separately, and common experimental validation overhead is
+not deployable search cost.
+
+`ChallengeBank` and its bounded manifest record a development, calibration, or
+held-out partition and challenge/configuration hashes. The library boundary
+withholds labels from the runner, but orchestration that trains only on
+development/calibration labels, freezes the team/configuration before held-out
+testing, disables label-dependent updates, and resets label-free adaptation is
+not implemented here. Results must be called exploratory unless independent
+preregistration exists; no preregistration is represented by this repository.
+Scores and rates depend on target prevalence. Comparisons require matched,
+declared prevalence and seed partitions. No seed-paired v2 comparisons or
+uncertainty summaries have been run, and no held-out performance claim is made.
+Proposal search and matched-budget no-intervention, random, independent, and
+shared-proposal comparisons are also not implemented because no compatible
+proposal interface exists. Do not claim full-linked-system injection or
+clamp-only/damping-only ablations.
+
+Migration: keep historical commands and archived CSVs unchanged; use
+`python -m crystallization_contest v2` for the illustrative JSON breakdown, or
+import `ChallengeBank`, `EpisodeResult`, the scoring functions, and
+`paired_team_evaluation` for a local explicit runner. The caller must pass the
+frozen config and all proposal attempts/work counts and use the accepted
+complete team only.
+
 ## Reproducibility
 
 Every job seeds its generators from `(seed, width, ...)`. The package reproduces rows stored in `results/` exactly; two tests check one sweep row and one contest row. Parallel runs return rows in job order, so output does not depend on scheduling. Raw rows are written as they arrive when `--out` is given.
