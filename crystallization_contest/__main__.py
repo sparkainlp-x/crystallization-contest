@@ -9,7 +9,7 @@ import csv
 import os
 import sys
 
-from . import contest, evaluation_v2, sweep
+from . import contest, development_benchmark, evaluation_v2, sweep
 from .contest import CFG_BY_TAG
 from .stats import write_rows
 
@@ -46,7 +46,10 @@ class RawSink:
 def build_parser():
     ap = argparse.ArgumentParser(prog="crystallization_contest",
                                  description="SYNTHETIC reward-scheme and contest simulations.")
-    ap.add_argument("experiment", choices=["sweep", "contest", "stress", "fcost", "v2"])
+    ap.add_argument(
+        "experiment",
+        choices=["sweep", "contest", "stress", "fcost", "v2", "dev-benchmark"],
+    )
     ap.add_argument("--quick", action="store_true", help="tiny smoke run")
     ap.add_argument("--widths", type=_ints, help="comma list, e.g. 32,64,128")
     ap.add_argument("--agents", type=_ints, help="sweep: comma list of N (default 3,5)")
@@ -55,6 +58,10 @@ def build_parser():
     ap.add_argument("--seeds", type=int, help="number of seeds (default 3, quick 2)")
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--out", help="directory for <experiment>_raw.csv and _summary.csv")
+    ap.add_argument(
+        "--dry-run", action="store_true",
+        help="dev-benchmark: write the frozen plan without evaluating a model",
+    )
     return ap
 
 
@@ -63,6 +70,25 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.experiment == "v2":
         print(evaluation_v2.strict_json_dumps(evaluation_v2.worked_example()))
+        return 0
+    if a.experiment == "dev-benchmark":
+        if not a.out:
+            ap.error("dev-benchmark requires --out DIR")
+        if a.seeds is not None and not 1 <= a.seeds <= development_benchmark.MAX_SEEDS:
+            ap.error(
+                f"dev-benchmark --seeds must be in [1, {development_benchmark.MAX_SEEDS}]"
+            )
+        result = development_benchmark.run_development_benchmark(
+            a.out,
+            seeds=a.seeds or development_benchmark.DEFAULT_SEEDS,
+            dry_run=a.dry_run,
+        )
+        print(evaluation_v2.strict_json_dumps({
+            "status": result["status"],
+            "manifest": os.path.join(os.path.abspath(a.out), "manifest.json"),
+            "dry_run": a.dry_run,
+            "seed_count": result.get("seed_count", len(result.get("per_seed", []))),
+        }))
         return 0
     if a.jobs < 1:
         ap.error("--jobs must be >= 1")

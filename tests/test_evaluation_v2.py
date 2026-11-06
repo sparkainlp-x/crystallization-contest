@@ -378,15 +378,18 @@ def test_selection_rejects_held_out_bank_and_report_only_cannot_promote():
     assert not hasattr(report, "accepted_team")
     assert frozen_team == {"id": "untouched"}
     assert actions[-1] == ("score", ("secret-target",))
-    with pytest.raises(ValueError, match="held-out"):
-        report_frozen_team(
-            frozen_team,
-            ChallengeBank(24, "calibration", ["stimulus"], (None,)),
-            runner,
-            objective,
-            {},
-            objective_name="report-only",
-        )
+    actions.clear()
+    calibration_report = report_frozen_team(
+        frozen_team,
+        ChallengeBank(24, "calibration", ["stimulus"], (None,)),
+        runner,
+        objective,
+        {},
+        objective_name="report-only",
+    )
+    assert calibration_report.report()["selection"] == "not_performed"
+    assert calibration_report.partition == "calibration"
+    assert actions[-1] == ("score", (None,))
 
 
 def test_accepted_snapshot_cannot_be_changed_during_scoring():

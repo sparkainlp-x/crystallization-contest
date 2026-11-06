@@ -136,18 +136,13 @@ not deployable search cost.
 
 `ChallengeBank` and its bounded manifest record a development, calibration, or
 held-out partition and challenge/configuration hashes. The library boundary
-withholds labels from the runner, but orchestration that trains only on
-development/calibration labels, freezes the team/configuration before held-out
-testing, disables label-dependent updates, and resets label-free adaptation is
-not implemented here. Results must be called exploratory unless independent
-preregistration exists; no preregistration is represented by this repository.
-Scores and rates depend on target prevalence. Comparisons require matched,
-declared prevalence and seed partitions. No seed-paired v2 comparisons or
-uncertainty summaries have been run, and no held-out performance claim is made.
-Proposal search and matched-budget no-intervention, random, independent, and
-shared-proposal comparisons are also not implemented because no compatible
-proposal interface exists. Do not claim full-linked-system injection or
-clamp-only/damping-only ablations.
+withholds labels from the runner, but a general orchestration API for held-out
+testing and label-free adaptation is not implemented. The opt-in
+`dev-benchmark` below has a narrower development/development-validation flow.
+Results must be called exploratory; no independent preregistration is
+represented by this repository. Scores and rates depend on target prevalence.
+The development smoke reports paired descriptive differences, not inferential
+evidence or held-out performance.
 
 Migration: keep historical commands and archived CSVs unchanged; use
 `python -m crystallization_contest v2` for the illustrative JSON breakdown, or
@@ -157,6 +152,57 @@ for held-out reporting only. Provide a trusted runner with the explicit episode
 index and use `make_cost_aware_utility_objective` (or an equivalent objective)
 with all failed proposal attempts and search/evaluation operation counts. Keep
 common validation overhead separate and use the accepted complete team only.
+
+### Real-model development benchmark
+
+`python -m crystallization_contest dev-benchmark --out DIR --dry-run` writes a
+frozen plan and manifest without evaluating a model. Omitting `--dry-run`
+executes the bounded version `real-model-development-v2`; `--seeds` is limited
+to one through four. It uses the repository's `events.observe` generator to
+pre-materialize width-16 complex observations, then applies the three membrane
+updates, coupling, declaration thresholds, self-confirmation state, and optional
+shield from the existing contest model. Each episode has 20 steps and the
+synthetic bank alternates planted/noise episodes (50% positive prevalence).
+The vector normalization is the repository's complex Euclidean normalization;
+target direction is correct when `abs(inner(output,target))**2 >= events.TRUTH`.
+The development and development-validation banks use distinct seed namespaces
+and are identified by their complete challenge hashes; partition names alone do
+not prove disjointness.
+
+The registered arms are no intervention and random bounded full-team proposals.
+The latter independently draws each membrane's `th`, `c`, and `g` uniformly
+within the contest parameter bounds, evaluates every proposal on the same
+development bank, and selects the earliest proposal with maximum cost-aware
+target-direction utility. This is explicitly synthetic oracle/supervised
+selection. Both arms start each bank from the same frozen parameters and
+initial `sp=[0.5,0.5,0.5]`; within a bank, `sp` evolves sequentially across
+episodes, while the development-validation call resets it. Validation is
+report-only and cannot promote a team. Independent search and shared search are
+`NOT_IMPLEMENTED`; the latter has no priced communication/aggregation path.
+Equal search budgets across agents and matched-budget arms are not claimed.
+
+The configured utility uses illustrative (not calibrated) coefficients
+`b_tp=1`, `c_fp=2`, `c_fn=1`, `c_compute=0.000001` per deterministic operation,
+and `c_attempt=0`. A wrong direction on a target-present episode is an FN for
+the episode-level target-direction endpoint, not a presence-detection TP.
+Direction correctness among all emitted directions is separately reported.
+The deterministic operation unit is a component visit in initialization,
+observation/Oja/coupling vector passes, or peer/shield fidelity checks; a
+proposal scalar draw is one unit. It is not a FLOP or hardware-time estimate.
+Rejected proposals and their evaluation operations are charged; repeated
+incumbent comparison work and validation-only work are reported separately
+from deployment search cost. Wall and CPU time are descriptive only.
+
+The runner receives pre-materialized stimuli and indexed episode streams, so
+candidate control flow cannot consume randomness assigned to another episode.
+Python callbacks are not a security sandbox. The manifest is saved before
+evaluation and captures source/config/team identity, challenge hashes, and
+budgets, but is not independently timestamped preregistration. The 120-second
+wall cap is checked between episodes/proposal evaluations, so one current
+episode is not preempted; the 512 MiB `tracemalloc` cap does not cover RSS or
+native allocations. An interrupted run keeps per-seed statuses. The output
+JSON/CSV/Markdown is an exploratory operability record; at most four seeds do
+not support a superiority claim. No held-out bank is generated or evaluated.
 
 ## Reproducibility
 

@@ -606,7 +606,7 @@ class PairedEvaluation:
 
 @dataclass(frozen=True)
 class FrozenTeamReport:
-    """Held-out metrics for a copied frozen team; contains no promotion result."""
+    """Report-only metrics for a copied frozen team; no promotion result."""
 
     objective_name: str
     score: float
@@ -616,11 +616,13 @@ class FrozenTeamReport:
     common_validation_operations: int
     wall_seconds: float
     cpu_seconds: float
+    partition: str = "held-out"
 
     def report(self):
         return {
             "protocol_version": PROTOCOL_VERSION,
-            "report_type": "frozen_team_held_out",
+            "report_type": "frozen_team_report_only",
+            "partition": self.partition,
             "objective_name": self.objective_name,
             "score": self.score,
             "counts": self.counts,
@@ -636,8 +638,10 @@ class FrozenTeamReport:
 
 
 def report_frozen_team(team, bank, runner, objective, initial_state, *,
-                       objective_name, common_validation_operations=0):
-    """Evaluate one frozen team on held-out data for reporting only.
+                       objective_name, common_validation_operations=0,
+                       search_attempts=0, search_operations=0,
+                       summarizer=None):
+    """Evaluate one frozen team on validation/held-out data for reporting only.
 
     No team or promotion decision is returned. The original team and initial
     state are copied, and the runner receives no labels. Python callbacks and
@@ -646,8 +650,8 @@ def report_frozen_team(team, bank, runner, objective, initial_state, *,
     """
     if not isinstance(bank, ChallengeBank):
         raise TypeError("bank must be a ChallengeBank")
-    if bank.partition != "held-out":
-        raise ValueError("report_frozen_team requires a held-out bank")
+    if bank.partition not in ("calibration", "held-out"):
+        raise ValueError("report_frozen_team requires a validation or held-out bank")
     if not callable(runner) or not callable(objective):
         raise TypeError("runner and objective must be callable")
     if not isinstance(objective_name, str) or not objective_name:
@@ -655,6 +659,8 @@ def report_frozen_team(team, bank, runner, objective, initial_state, *,
     common_validation_operations = _integer(
         "common_validation_operations", common_validation_operations
     )
+    search_attempts = _integer("search_attempts", search_attempts)
+    search_operations = _integer("search_operations", search_operations)
     team_snapshot = deepcopy(team)
     state = deepcopy(initial_state)
     results = []
@@ -669,8 +675,13 @@ def report_frozen_team(team, bank, runner, objective, initial_state, *,
             raise TypeError("runner must return an EpisodeResult for each episode")
         results.append(result)
         state = deepcopy(next_state)
-    counts = _arm_summary(results, bank._targets)
-    costs = ArmCostAttribution(0, 0, counts["compute_operations"])
+    results = tuple(results)
+    counts = (summarizer or _arm_summary)(results, bank._targets)
+    if not isinstance(counts, dict) or "compute_operations" not in counts:
+        raise ValueError("summarizer must return counts including compute_operations")
+    costs = ArmCostAttribution(
+        search_attempts, search_operations, counts["compute_operations"]
+    )
     context = ScoringContext(
         arm="frozen",
         incumbent=None,
@@ -678,7 +689,7 @@ def report_frozen_team(team, bank, runner, objective, initial_state, *,
         common_validation_operations=common_validation_operations,
         frozen_team=costs,
     )
-    value = objective(tuple(results), bank._targets, context)
+    value = objective(results, bank._targets, context)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("objective must return a finite scalar")
     try:
@@ -688,6 +699,7 @@ def report_frozen_team(team, bank, runner, objective, initial_state, *,
     if not math.isfinite(value):
         raise ValueError("objective must return a finite scalar")
     return FrozenTeamReport(
+        partition=bank.partition,
         objective_name=objective_name,
         score=value,
         counts=counts,
@@ -704,7 +716,8 @@ def paired_team_evaluation(incumbent_team, candidate_team, bank, runner, objecti
                            candidate_proposal_operations=0,
                            incumbent_search_attempts=0,
                            incumbent_search_operations=0,
-                           common_validation_operations=0):
+                           common_validation_operations=0,
+                           summarizer=None):
     """Select between complete teams on the same non-held-out immutable bank.
 
     ``runner(team_copy, episode_index, stimulus, state_copy, episode_streams)``
@@ -752,8 +765,11 @@ def paired_team_evaluation(incumbent_team, candidate_team, bank, runner, objecti
                 raise TypeError("runner must return an EpisodeResult for each episode")
             results.append(result)
             state = deepcopy(next_state)
-        counts = _arm_summary(results, bank._targets)
-        return counts, tuple(results)
+        results = tuple(results)
+        counts = (summarizer or _arm_summary)(results, bank._targets)
+        if not isinstance(counts, dict) or "compute_operations" not in counts:
+            raise ValueError("summarizer must return counts including compute_operations")
+        return counts, results
 
     def score(results, arm, incumbent_costs, candidate_costs):
         context = ScoringContext(
