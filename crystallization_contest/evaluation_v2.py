@@ -1,9 +1,9 @@
 """Opt-in scoring and paired-evaluation primitives (synthetic protocol v2 core).
 
 This module does not change the legacy experiment or implement proposal
-generation. Evaluators receive pre-materialized stimuli and indexed random
-streams, never challenge labels. The labels are used only after evaluation to
-score returned directions.
+generation. Episode runners receive pre-materialized stimuli and indexed random
+streams, never challenge labels. Scoring callbacks receive labels only after
+the evaluation runs; Python callbacks and closures are not a security sandbox.
 """
 
 from copy import deepcopy
@@ -75,8 +75,13 @@ def _score_inputs(episodes, w, joint_true, true_counts, false_counts, agent, fco
             raise ValueError(f"false_counts[{i}] exceeds episodes")
         if true_counts[i] + count > episodes:
             raise ValueError(f"true_counts[{i}] + false_counts[{i}] exceeds episodes")
-    if joint_true > episodes or any(joint_true > count for count in true_counts):
-        raise ValueError("joint_true must be bounded by episodes and every true count")
+    joint_lower = max(0, sum(true_counts) - (len(true_counts) - 1) * episodes)
+    joint_upper = min(true_counts)
+    if not joint_lower <= joint_true <= joint_upper:
+        raise ValueError(
+            "joint_true must be consistent with the per-agent true counts "
+            f"(expected {joint_lower} <= joint_true <= {joint_upper})"
+        )
     return episodes, w, joint_true, true_counts, false_counts, agent, fcost
 
 
@@ -156,27 +161,29 @@ def _metric(numerator, denominator):
     return {"value": numerator / denominator, "status": "defined"}
 
 
-def utility_score(episodes, *, tp, fp, fn, tn, b_tp, c_fp, c_fn,
+def utility_score(episodes, *, target_direction_tp, target_direction_fp,
+                  target_direction_fn, target_direction_tn, b_tp, c_fp, c_fn,
                   c_compute, c_attempt, compute_operations, proposal_attempts,
                   incorrect_direction_declarations=0, raw_declarations=0,
                   raw_true_declarations=0, raw_false_declarations=0,
                   wall_seconds=None, cpu_seconds=None):
     """Evaluate target-detection utility with explicit costs and operation units.
 
-    TP/FP/FN/TN are episode-level target-detection outcomes. A wrong-direction
-    declaration on a target-present episode is an FN and is counted separately;
-    no direction penalty is silently added. Raw membrane declarations are kept
-    in separate fields. ``compute_operations`` must include all proposal,
+    Counts are episode-level target-direction detection outcomes, not target-
+    presence detection. A wrong-direction declaration on a target-present
+    episode is an FN and is counted separately; no direction penalty is silently
+    added. Raw membrane declarations are kept in separate fields.
+    ``compute_operations`` must include all proposal,
     search, and evaluation work charged to this result; do not also price the
     same work through ``c_attempt`` unless intentional. Validation-only overhead
     should be reported separately and excluded from deployable-search cost.
     """
     episodes = _integer("episodes", episodes, 1)
     counts = {
-        "TP": _integer("tp", tp),
-        "FP": _integer("fp", fp),
-        "FN": _integer("fn", fn),
-        "TN": _integer("tn", tn),
+        "TP": _integer("target_direction_tp", target_direction_tp),
+        "FP": _integer("target_direction_fp", target_direction_fp),
+        "FN": _integer("target_direction_fn", target_direction_fn),
+        "TN": _integer("target_direction_tn", target_direction_tn),
     }
     if sum(counts.values()) != episodes:
         raise ValueError("TP + FP + FN + TN must equal episodes")
@@ -221,8 +228,9 @@ def utility_score(episodes, *, tp, fp, fn, tn, b_tp, c_fp, c_fn,
         "total_utility": total,
         "per_episode_utility": total / episodes,
         "per_episode_denominator": episodes,
+        "endpoint": "episode_level_target_direction_detection",
         "raw_counts": {
-            **counts,
+            "target_direction_detection": counts,
             "incorrect_direction_declarations": incorrect_direction_declarations,
             "raw_declarations": raw_declarations,
             "raw_true_declarations": raw_true_declarations,
@@ -242,9 +250,15 @@ def utility_score(episodes, *, tp, fp, fn, tn, b_tp, c_fp, c_fn,
         },
         "component_totals": components,
         "metrics": {
-            "precision": _metric(counts["TP"], counts["TP"] + counts["FP"]),
-            "recall": _metric(counts["TP"], counts["TP"] + counts["FN"]),
-            "specificity": _metric(counts["TN"], counts["TN"] + counts["FP"]),
+            "target_direction_precision": _metric(
+                counts["TP"], counts["TP"] + counts["FP"]
+            ),
+            "target_direction_recall": _metric(
+                counts["TP"], counts["TP"] + counts["FN"]
+            ),
+            "target_direction_specificity": _metric(
+                counts["TN"], counts["TN"] + counts["FP"]
+            ),
         },
         "timing": {"wall_seconds": wall_seconds, "cpu_seconds": cpu_seconds},
     }
@@ -397,21 +411,140 @@ class EpisodeResult:
         object.__setattr__(self, "raw_directions", raw)
 
 
+@dataclass(frozen=True)
+class ArmCostAttribution:
+    """Deployable proposal/search cost and evaluation cost for one team arm."""
+
+    search_attempts: int
+    search_operations: int
+    evaluation_operations: int
+
+    def __post_init__(self):
+        _integer("search_attempts", self.search_attempts)
+        _integer("search_operations", self.search_operations)
+        _integer("evaluation_operations", self.evaluation_operations)
+
+    @property
+    def compute_operations(self):
+        return self.search_operations + self.evaluation_operations
+
+
+@dataclass(frozen=True)
+class ScoringContext:
+    """Immutable per-comparison cost attribution passed to each objective call.
+
+    Search attempts must include every failed proposal. Search operations
+    include proposal generation/search work; evaluation operations come from
+    EpisodeResult. Common validation overhead is reported separately and is
+    excluded from the deployable arm costs.
+    """
+
+    arm: str
+    incumbent: ArmCostAttribution | None
+    candidate: ArmCostAttribution | None
+    common_validation_operations: int
+    frozen_team: ArmCostAttribution | None = None
+
+    def __post_init__(self):
+        if self.arm not in ("incumbent", "candidate", "frozen"):
+            raise ValueError("arm must be incumbent, candidate, or frozen")
+        for name in ("incumbent", "candidate", "frozen_team"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, ArmCostAttribution):
+                raise TypeError(f"{name} must be ArmCostAttribution or None")
+        _integer("common_validation_operations", self.common_validation_operations)
+
+    def costs_for_arm(self):
+        if self.arm == "frozen":
+            return self.frozen_team
+        return getattr(self, self.arm)
+
+
+def _cost_report(costs):
+    return {
+        "search_attempts_including_failed": costs.search_attempts,
+        "search_operations": costs.search_operations,
+        "evaluation_operations": costs.evaluation_operations,
+        "deployable_compute_operations": costs.compute_operations,
+    }
+
+
+def make_cost_aware_utility_objective(*, b_tp, c_fp, c_fn, c_compute, c_attempt):
+    """Build a scalar objective that charges each arm's attributed full cost."""
+    coefficients = {
+        "b_tp": _finite_nonnegative("b_tp", b_tp),
+        "c_fp": _finite_nonnegative("c_fp", c_fp),
+        "c_fn": _finite_nonnegative("c_fn", c_fn),
+        "c_compute": _finite_nonnegative("c_compute", c_compute),
+        "c_attempt": _finite_nonnegative("c_attempt", c_attempt),
+    }
+
+    def objective(results, labels, scoring_context):
+        if not isinstance(scoring_context, ScoringContext):
+            raise TypeError("objective requires a ScoringContext")
+        costs = scoring_context.costs_for_arm()
+        if costs is None:
+            raise ValueError("scoring context has no cost attribution for this arm")
+        counts = _arm_summary(results, labels)
+        return utility_score(
+            len(labels),
+            target_direction_tp=counts["target_direction_detection"]["TP"],
+            target_direction_fp=counts["target_direction_detection"]["FP"],
+            target_direction_fn=counts["target_direction_detection"]["FN"],
+            target_direction_tn=counts["target_direction_detection"]["TN"],
+            b_tp=coefficients["b_tp"],
+            c_fp=coefficients["c_fp"],
+            c_fn=coefficients["c_fn"],
+            c_compute=coefficients["c_compute"],
+            c_attempt=coefficients["c_attempt"],
+            compute_operations=costs.compute_operations,
+            proposal_attempts=costs.search_attempts,
+            incorrect_direction_declarations=counts[
+                "incorrect_direction_declarations"
+            ],
+            raw_declarations=counts["raw_declarations"],
+            raw_true_declarations=counts["raw_true_declarations"],
+            raw_false_declarations=counts["raw_false_declarations"],
+        )["total_utility"]
+
+    return objective
+
+
+@dataclass(frozen=True)
+class EpisodeRandomStreams:
+    """Random streams bound to one episode index, not inferred from stimuli."""
+
+    indexed_streams: IndexedStreams = field(repr=False)
+    episode_index: int
+
+    def __post_init__(self):
+        _integer("episode_index", self.episode_index)
+        if self.episode_index >= self.indexed_streams.episodes:
+            raise ValueError("episode_index is outside the stream bank")
+
+    def rng_for(self, *, step=0, agent=0, channel="environment"):
+        return self.indexed_streams.rng_for(
+            self.episode_index, step=step, agent=agent, channel=channel
+        )
+
+
 def _arm_summary(results, targets):
-    tp = fp = fn = tn = 0
+    direction_counts = {"TP": 0, "FP": 0, "FN": 0, "TN": 0}
     raw_true = raw_false = incorrect_direction = operations = 0
+    emitted = 0
     for result, target in zip(results, targets):
+        emitted += result.declared_direction is not None
         if target is None:
             if result.declared_direction is None:
-                tn += 1
+                direction_counts["TN"] += 1
             else:
-                fp += 1
+                direction_counts["FP"] += 1
             raw_false += len(result.raw_directions)
         else:
             if result.declared_direction == target:
-                tp += 1
+                direction_counts["TP"] += 1
             else:
-                fn += 1
+                direction_counts["FN"] += 1
             raw_true += sum(direction == target for direction in result.raw_directions)
             wrong = sum(direction != target for direction in result.raw_directions)
             raw_false += wrong
@@ -419,14 +552,13 @@ def _arm_summary(results, targets):
         operations += result.operation_count
     return {
         "episodes": len(results),
-        "TP": tp,
-        "FP": fp,
-        "FN": fn,
-        "TN": tn,
+        "endpoint": "episode_level_target_direction_detection",
+        "target_direction_detection": direction_counts,
         "raw_declarations": raw_true + raw_false,
         "raw_true_declarations": raw_true,
         "raw_false_declarations": raw_false,
         "incorrect_direction_declarations": incorrect_direction,
+        "emitted_declarations": emitted,
         "compute_operations": operations,
     }
 
@@ -443,8 +575,8 @@ class PairedEvaluation:
     incumbent: dict
     candidate: dict
     challenge_sha256: str
-    candidate_proposal_attempts: int
-    candidate_proposal_operations: int
+    incumbent_costs: ArmCostAttribution
+    candidate_costs: ArmCostAttribution
     common_validation_operations: int
     wall_seconds: float
     cpu_seconds: float
@@ -462,10 +594,8 @@ class PairedEvaluation:
             "candidate": self.candidate,
             "challenge_sha256": self.challenge_sha256,
             "costs": {
-                "candidate_proposal_attempts": self.candidate_proposal_attempts,
-                "candidate_proposal_operations": self.candidate_proposal_operations,
-                "incumbent_evaluation_operations": self.incumbent["compute_operations"],
-                "candidate_evaluation_operations": self.candidate["compute_operations"],
+                "incumbent": _cost_report(self.incumbent_costs),
+                "candidate": _cost_report(self.candidate_costs),
                 "common_validation_operations": self.common_validation_operations,
                 "wall_seconds": self.wall_seconds,
                 "cpu_seconds": self.cpu_seconds,
@@ -474,29 +604,136 @@ class PairedEvaluation:
         }
 
 
-def paired_team_evaluation(incumbent_team, candidate_team, bank, runner, objective,
-                           initial_state, *, objective_name, candidate_proposal_attempts,
-                           candidate_proposal_operations=0,
-                           common_validation_operations=0):
-    """Evaluate complete incumbent/candidate teams on the same immutable bank.
+@dataclass(frozen=True)
+class FrozenTeamReport:
+    """Held-out metrics for a copied frozen team; contains no promotion result."""
 
-    ``runner(team_copy, stimulus, state_copy, rng_for)`` returns
-    ``(EpisodeResult, next_state)``. It receives no target labels. Both arms start
-    from separate copies of the same initial state; all returned evaluation state
-    is discarded. The candidate team is accepted atomically only for a strictly
-    higher finite scalar objective. Ties deterministically keep the incumbent.
+    objective_name: str
+    score: float
+    counts: dict
+    challenge_sha256: str
+    costs: ArmCostAttribution
+    common_validation_operations: int
+    wall_seconds: float
+    cpu_seconds: float
+
+    def report(self):
+        return {
+            "protocol_version": PROTOCOL_VERSION,
+            "report_type": "frozen_team_held_out",
+            "objective_name": self.objective_name,
+            "score": self.score,
+            "counts": self.counts,
+            "challenge_sha256": self.challenge_sha256,
+            "costs": {
+                "frozen_team": _cost_report(self.costs),
+                "common_validation_operations": self.common_validation_operations,
+                "wall_seconds": self.wall_seconds,
+                "cpu_seconds": self.cpu_seconds,
+            },
+            "selection": "not_performed",
+        }
+
+
+def report_frozen_team(team, bank, runner, objective, initial_state, *,
+                       objective_name, common_validation_operations=0):
+    """Evaluate one frozen team on held-out data for reporting only.
+
+    No team or promotion decision is returned. The original team and initial
+    state are copied, and the runner receives no labels. Python callbacks and
+    closures are not a security sandbox; use trusted runner/objective code and
+    do not expose this report to proposal-generation or online-update code.
     """
     if not isinstance(bank, ChallengeBank):
         raise TypeError("bank must be a ChallengeBank")
+    if bank.partition != "held-out":
+        raise ValueError("report_frozen_team requires a held-out bank")
+    if not callable(runner) or not callable(objective):
+        raise TypeError("runner and objective must be callable")
+    if not isinstance(objective_name, str) or not objective_name:
+        raise ValueError("objective_name must be a nonempty string")
+    common_validation_operations = _integer(
+        "common_validation_operations", common_validation_operations
+    )
+    team_snapshot = deepcopy(team)
+    state = deepcopy(initial_state)
+    results = []
+    streams = bank.indexed_streams
+    wall_start, cpu_start = time.perf_counter(), time.process_time()
+    for index, stimulus in enumerate(bank.stimuli):
+        result, next_state = runner(
+            deepcopy(team_snapshot), index, stimulus, deepcopy(state),
+            EpisodeRandomStreams(streams, index),
+        )
+        if not isinstance(result, EpisodeResult):
+            raise TypeError("runner must return an EpisodeResult for each episode")
+        results.append(result)
+        state = deepcopy(next_state)
+    counts = _arm_summary(results, bank._targets)
+    costs = ArmCostAttribution(0, 0, counts["compute_operations"])
+    context = ScoringContext(
+        arm="frozen",
+        incumbent=None,
+        candidate=None,
+        common_validation_operations=common_validation_operations,
+        frozen_team=costs,
+    )
+    value = objective(tuple(results), bank._targets, context)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("objective must return a finite scalar")
+    try:
+        value = float(value)
+    except OverflowError as exc:
+        raise ValueError("objective must return a finite scalar") from exc
+    if not math.isfinite(value):
+        raise ValueError("objective must return a finite scalar")
+    return FrozenTeamReport(
+        objective_name=objective_name,
+        score=value,
+        counts=counts,
+        challenge_sha256=bank.sha256,
+        costs=costs,
+        common_validation_operations=common_validation_operations,
+        wall_seconds=time.perf_counter() - wall_start,
+        cpu_seconds=time.process_time() - cpu_start,
+    )
+
+
+def paired_team_evaluation(incumbent_team, candidate_team, bank, runner, objective,
+                           initial_state, *, objective_name, candidate_proposal_attempts,
+                           candidate_proposal_operations=0,
+                           incumbent_search_attempts=0,
+                           incumbent_search_operations=0,
+                           common_validation_operations=0):
+    """Select between complete teams on the same non-held-out immutable bank.
+
+    ``runner(team_copy, episode_index, stimulus, state_copy, episode_streams)``
+    returns ``(EpisodeResult, next_state)``. Callbacks are Python code, not a
+    security sandbox: closures or globals may still access labels/state. Both
+    arms start from independent copies of the same initial state; evaluation
+    state is discarded. The objective receives explicit immutable per-arm
+    costs. Held-out banks are rejected; use report_frozen_team for reporting
+    without a winner or promotion.
+    """
+    if not isinstance(bank, ChallengeBank):
+        raise TypeError("bank must be a ChallengeBank")
+    if bank.partition == "held-out":
+        raise ValueError("held-out banks cannot be used for team selection")
     if not callable(runner) or not callable(objective):
         raise TypeError("runner and objective must be callable")
     if not isinstance(objective_name, str) or not objective_name:
         raise ValueError("objective_name must be a nonempty string")
     candidate_proposal_attempts = _integer(
-        "candidate_proposal_attempts", candidate_proposal_attempts, 1
+        "candidate_proposal_attempts", candidate_proposal_attempts
     )
     candidate_proposal_operations = _integer(
         "candidate_proposal_operations", candidate_proposal_operations
+    )
+    incumbent_search_attempts = _integer(
+        "incumbent_search_attempts", incumbent_search_attempts
+    )
+    incumbent_search_operations = _integer(
+        "incumbent_search_operations", incumbent_search_operations
     )
     common_validation_operations = _integer(
         "common_validation_operations", common_validation_operations
@@ -505,10 +742,11 @@ def paired_team_evaluation(incumbent_team, candidate_team, bank, runner, objecti
     def evaluate(team):
         state = deepcopy(initial_state)
         results = []
+        streams = bank.indexed_streams
         for index, stimulus in enumerate(bank.stimuli):
             result, next_state = runner(
-                deepcopy(team), stimulus, deepcopy(state),
-                bank.indexed_streams.rng_for,
+                deepcopy(team), index, stimulus, deepcopy(state),
+                EpisodeRandomStreams(streams, index),
             )
             if not isinstance(result, EpisodeResult):
                 raise TypeError("runner must return an EpisodeResult for each episode")
@@ -517,8 +755,14 @@ def paired_team_evaluation(incumbent_team, candidate_team, bank, runner, objecti
         counts = _arm_summary(results, bank._targets)
         return counts, tuple(results)
 
-    def score(results):
-        value = objective(results, bank._targets)
+    def score(results, arm, incumbent_costs, candidate_costs):
+        context = ScoringContext(
+            arm=arm,
+            incumbent=incumbent_costs,
+            candidate=candidate_costs,
+            common_validation_operations=common_validation_operations,
+        )
+        value = objective(results, bank._targets, context)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError("objective must return a finite scalar")
         try:
@@ -534,8 +778,22 @@ def paired_team_evaluation(incumbent_team, candidate_team, bank, runner, objecti
     wall_start, cpu_start = time.perf_counter(), time.process_time()
     incumbent_counts, incumbent_results = evaluate(incumbent_snapshot)
     candidate_counts, candidate_results = evaluate(candidate_snapshot)
-    incumbent_score = score(incumbent_results)
-    candidate_score = score(candidate_results)
+    incumbent_costs = ArmCostAttribution(
+        incumbent_search_attempts,
+        incumbent_search_operations,
+        incumbent_counts["compute_operations"],
+    )
+    candidate_costs = ArmCostAttribution(
+        candidate_proposal_attempts,
+        candidate_proposal_operations,
+        candidate_counts["compute_operations"],
+    )
+    incumbent_score = score(
+        incumbent_results, "incumbent", incumbent_costs, candidate_costs
+    )
+    candidate_score = score(
+        candidate_results, "candidate", incumbent_costs, candidate_costs
+    )
     wall_seconds = time.perf_counter() - wall_start
     cpu_seconds = time.process_time() - cpu_start
     accepted = candidate_score > incumbent_score
@@ -548,8 +806,8 @@ def paired_team_evaluation(incumbent_team, candidate_team, bank, runner, objecti
         incumbent=incumbent_counts,
         candidate=candidate_counts,
         challenge_sha256=bank.sha256,
-        candidate_proposal_attempts=candidate_proposal_attempts,
-        candidate_proposal_operations=candidate_proposal_operations,
+        incumbent_costs=incumbent_costs,
+        candidate_costs=candidate_costs,
         common_validation_operations=common_validation_operations,
         wall_seconds=wall_seconds,
         cpu_seconds=cpu_seconds,
@@ -569,10 +827,10 @@ def worked_example():
     )
     utility = utility_score(
         10,
-        tp=4,
-        fp=1,
-        fn=2,
-        tn=3,
+        target_direction_tp=4,
+        target_direction_fp=1,
+        target_direction_fn=2,
+        target_direction_tn=3,
         b_tp=2.0,
         c_fp=1.0,
         c_fn=0.5,

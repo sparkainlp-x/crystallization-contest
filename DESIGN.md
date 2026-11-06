@@ -90,25 +90,44 @@ those reward functions.
 
 The v2 core instead compares complete teams on one immutable, pre-materialized
 challenge bank. Each episode's observation stimuli are provided as immutable
-values; indexed random streams are keyed by seed partition, episode, step,
+values. The runner receives the explicit episode index and an episode-bound
+stream accessor; duplicate stimuli do not require inferring which episode is
+running. Indexed random streams are keyed by seed partition, episode, step,
 agent, and channel, so extra random calls in a branch cannot shift another
-indexed stream. The runner receives a stimulus and a stream accessor with no
-bank labels. Incumbent and candidate each receive independent copies of the
-same initial state, including caller-managed warm vectors, rate EMAs, and
-self-confirmation state. Their evaluation state is discarded after scoring.
-One finite scalar objective is declared before the comparison; a strict win
-accepts the whole evaluated candidate team, while a tie keeps the incumbent.
+indexed stream. The runner gets stimuli and streams, not bank labels. Incumbent
+and candidate each receive independent copies of the same initial state,
+including caller-managed warm vectors, rate EMAs, and self-confirmation state.
+Their evaluation state is discarded after scoring. An immutable `ScoringContext`
+provides each objective call with both arms' attributed search/proposal attempts
+(including failed attempts), search/proposal operation counts, and measured
+evaluation operations. A cost-aware objective can charge search and evaluation
+compute plus per-attempt costs; avoid double counting work in both channels.
+Common validation overhead is reported separately and excluded from deployable
+cost. One finite scalar objective is declared before the comparison; a strict
+win accepts the whole evaluated candidate team, while a tie keeps the
+incumbent. `paired_team_evaluation` rejects held-out banks for selection.
 Do not use independently accepted membrane parameters as a hybrid team.
 Initialize the next trial from the caller's documented reset policy rather than
 carrying evaluation-derived state implicitly.
 
+Held-out output is available only through `report_frozen_team`, which evaluates
+one copy of a frozen team and returns metrics without returning a winner or
+promoted team. This API structure does not create a security sandbox:
+Python runners, objectives, closures, and globals can still access any state
+their authors expose, so they must be trusted and must not feed labels into
+action selection, proposal, calibration, or online updates.
+
 The v2 normalized score is `S_i = w*(J/E) + (1-w)*B_i - fcost*(F_i/E)`.
-The separate target-detection utility is
+The separate target-direction-detection utility is
 `U = b_tp*TP - c_fp*FP - c_fn*FN - c_compute*C - c_attempt*A`, reported as
-`U/E` per episode. Its TP/FP/FN/TN are episode-level target-direction
-detections; a wrong direction when a target is present is an FN and is reported
-separately, not mixed into classification or localization. Raw declarations
-remain separate. All utility coefficients are explicit and require units;
+`U/E` per episode. Its explicitly named endpoint TP/FP/FN/TN are episode-level
+target-direction detections, not ordinary target-presence detection; a wrong
+direction when a target is present is an FN and is reported separately, not
+mixed into classification or localization. No presence-detection or
+localization metrics are derived from this matrix. Raw per-agent declarations
+and emitted post-filter outputs remain separate; emitted outputs are shielded
+counts only when the frozen configuration enables a shield. All utility
+coefficients are explicit and require units;
 examples are illustrative, not optimal. The operation count must include all
 search and evaluation work, and the attempt count must include failed
 proposals. Avoid charging the same work in both terms. Timing is recorded in
@@ -133,9 +152,11 @@ clamp-only/damping-only ablations.
 Migration: keep historical commands and archived CSVs unchanged; use
 `python -m crystallization_contest v2` for the illustrative JSON breakdown, or
 import `ChallengeBank`, `EpisodeResult`, the scoring functions, and
-`paired_team_evaluation` for a local explicit runner. The caller must pass the
-frozen config and all proposal attempts/work counts and use the accepted
-complete team only.
+`paired_team_evaluation` for non-held-out selection. Use `report_frozen_team`
+for held-out reporting only. Provide a trusted runner with the explicit episode
+index and use `make_cost_aware_utility_objective` (or an equivalent objective)
+with all failed proposal attempts and search/evaluation operation counts. Keep
+common validation overhead separate and use the accepted complete team only.
 
 ## Reproducibility
 
